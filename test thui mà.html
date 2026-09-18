@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ngân hàng đề thi ĐGNL Hành nghề Y khoa</title>
+<style>
+
+:root{
+  --primary:#2563eb; --primary-dark:#1d4ed8; --secondary:#f1f5f9; --border:#e2e8f0;
+  --text:#0f172a; --muted:#64748b; --success:#16a34a; --danger:#dc2626; --bg:#f8fafc;
+  --card-bg:#ffffff;
+}
+*{box-sizing:border-box;}
+body{margin:0;font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--text);}
+.container{max-width:1200px;margin:0 auto;padding:24px;}
+.btn{border:none;border-radius:8px;padding:10px 16px;font-size:14px;font-weight:600;cursor:pointer;transition:.15s;display:inline-block;}
+.btn-primary{background:var(--primary);color:#fff;}
+.btn-primary:hover{background:var(--primary-dark);}
+.btn-secondary{background:var(--secondary);color:var(--text);border:1px solid var(--border);}
+.btn-secondary:hover{background:#e2e8f0;}
+.btn-link{background:none;color:var(--primary);text-decoration:underline;padding:8px;}
+.btn-lg{padding:14px 28px;font-size:16px;width:100%;margin-top:8px;}
+.btn-danger-outline{background:#fff;color:var(--danger);border:1px solid var(--danger);}
+.muted{color:var(--muted);font-size:14px;}
+
+.topbar{display:flex;justify-content:space-between;align-items:center;background:#fff;
+  padding:14px 24px;border-bottom:1px solid var(--border);position:sticky;top:0;z-index:10;flex-wrap:wrap;gap:10px;}
+.brand{font-weight:700;font-size:18px;}
+.topbar-actions{display:flex;gap:10px;flex-wrap:wrap;align-items:center;}
+
+.toolbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;flex-wrap:wrap;gap:10px;}
+#searchBox{flex:1;min-width:260px;padding:10px 14px;border:1px solid var(--border);border-radius:8px;font-size:14px;}
+.stats{font-size:13px;color:var(--muted);}
+
+.topic-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:16px;}
+.topic-card{background:var(--card-bg);border:1px solid var(--border);border-radius:12px;padding:18px;
+  cursor:pointer;transition:.15s;display:flex;flex-direction:column;gap:8px;}
+.topic-card:hover{border-color:var(--primary);box-shadow:0 4px 14px rgba(37,99,235,.12);transform:translateY(-2px);}
+.topic-card h4{margin:0;font-size:16px;}
+.topic-card .meta{font-size:13px;color:var(--muted);}
+.topic-card .progress-mini{height:6px;background:var(--secondary);border-radius:4px;overflow:hidden;}
+.topic-card .progress-mini-fill{height:100%;background:var(--success);}
+.topic-card-actions{display:flex;gap:6px;margin-top:6px;}
+.topic-card-actions button{font-size:12px;padding:5px 8px;}
+
+.empty-state{text-align:center;padding:60px 20px;color:var(--muted);}
+
+.modal-overlay{position:fixed;inset:0;background:rgba(15,23,42,.5);display:flex;align-items:center;justify-content:center;z-index:100;}
+.modal{background:#fff;border-radius:12px;padding:24px;width:420px;max-width:90vw;}
+.modal-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:16px;}
+.modal input[type=file]{margin:14px 0;width:100%;}
+
+</style>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">🩺 Ngân hàng 128 chủ đề — ĐGNL Hành nghề Y khoa</div>
+  <div class="topbar-actions">
+    <button id="btnImportTopic" class="btn btn-secondary">+ Thêm chủ đề (JSON)</button>
+    <button id="btnBackupAll" class="btn btn-primary">⬇ Sao lưu toàn bộ</button>
+    <label class="btn btn-secondary" for="fileRestore">⬆ Phục hồi sao lưu</label>
+    <input type="file" id="fileRestore" accept="application/json" hidden>
+  </div>
+</header>
+
+<main class="container">
+  <div class="toolbar">
+    <input type="text" id="searchBox" placeholder="🔍 Tìm chủ đề (VD: tuyến giáp, đái tháo đường...)" />
+    <div class="stats" id="statsBar"></div>
+  </div>
+  <div id="topicGrid" class="topic-grid"></div>
+  <div id="emptyState" class="empty-state" style="display:none">
+    <p>Chưa có chủ đề nào. Bấm <b>"+ Thêm chủ đề (JSON)"</b> để nhập file đề đã chuyển đổi.</p>
+  </div>
+</main>
+
+<div id="modalOverlay" class="modal-overlay" style="display:none">
+  <div class="modal">
+    <h3>Nhập chủ đề mới</h3>
+    <p class="muted">Chọn 1 hoặc nhiều file JSON đã được chuyển đổi từ (đề + đáp án). Mỗi file JSON tương ứng 1 chủ đề/thư mục.</p>
+    <input type="file" id="jsonFileInput" accept="application/json" multiple>
+    <div class="modal-actions">
+      <button id="modalCancel" class="btn btn-secondary">Hủy</button>
+      <button id="modalConfirm" class="btn btn-primary">Nhập</button>
+    </div>
+  </div>
+</div>
+
+<script>
+
+const DB_NAME = "mcq_exam_db";
+const DB_VERSION = 1;
+const STORE_TOPICS = "topics";
+const STORE_PROGRESS = "progress";
+
+function openDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, DB_VERSION);
+    req.onupgradeneeded = (e) => {
+      const db = e.target.result;
+      if (!db.objectStoreNames.contains(STORE_TOPICS)) db.createObjectStore(STORE_TOPICS, { keyPath: "topic_id" });
+      if (!db.objectStoreNames.contains(STORE_PROGRESS)) db.createObjectStore(STORE_PROGRESS, { keyPath: "topic_id" });
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function dbPut(storeName, value) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(storeName, "readwrite");
+    tx.objectStore(storeName).put(value);
+    tx.oncomplete = () => resolve(true);
+    tx.onerror = () => reject(tx.error);
+  });
+}
+async function dbGet(storeName, key) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(storeName, "readonly");
+    const req = tx.objectStore(storeName).get(key);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function dbGetAll(storeName) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(storeName, "readonly");
+    const req = tx.objectStore(storeName).getAll();
+    req.onsuccess = () => resolve(req.result || []);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function dbDelete(storeName, key) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(storeName, "readwrite");
+    tx.objectStore(storeName).delete(key);
+    tx.oncomplete = () => resolve(true);
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+const Store = {
+  async listTopics() { return await dbGetAll(STORE_TOPICS); },
+  async getTopic(topicId) { return await dbGet(STORE_TOPICS, topicId); },
+  async saveTopic(topicData) {
+    if (!topicData.topic_id) throw new Error("Thiếu topic_id trong file JSON");
+    await dbPut(STORE_TOPICS, topicData);
+  },
+  async deleteTopic(topicId) {
+    await dbDelete(STORE_TOPICS, topicId);
+    await dbDelete(STORE_PROGRESS, topicId);
+  },
+  async getProgress(topicId) {
+    const p = await dbGet(STORE_PROGRESS, topicId);
+    return p || { topic_id: topicId, notes: {}, attempts: [] };
+  },
+  async saveProgress(progress) { await dbPut(STORE_PROGRESS, progress); },
+  async exportAll() {
+    const topics = await dbGetAll(STORE_TOPICS);
+    const progressList = await dbGetAll(STORE_PROGRESS);
+    return { export_version: 1, exported_at: new Date().toISOString(), topics, progress: progressList };
+  },
+  async importAll(backupObj) {
+    if (!backupObj || !Array.isArray(backupObj.topics)) throw new Error("File sao lưu không hợp lệ");
+    for (const t of backupObj.topics) await dbPut(STORE_TOPICS, t);
+    for (const p of (backupObj.progress || [])) await dbPut(STORE_PROGRESS, p);
+  }
+};
+
+function downloadJSON(obj, filename) {
+  const blob = new Blob([JSON.stringify(obj, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function readFileAsJSON(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      try { resolve(JSON.parse(reader.result)); }
+      catch (e) { reject(new Error(`File "${file.name}" không phải JSON hợp lệ`)); }
+    };
+    reader.onerror = () => reject(reader.error);
+    reader.readAsText(file, "utf-8");
+  });
+}
+
+</script>
+<script>
+
+let ALL_TOPICS = [];
+
+async function refreshTopicGrid() {
+  ALL_TOPICS = await Store.listTopics();
+  ALL_TOPICS.sort((a, b) => a.topic_name.localeCompare(b.topic_name, 'vi'));
+  renderTopics(ALL_TOPICS);
+  renderStats(ALL_TOPICS);
+}
+
+function renderStats(topics) {
+  const totalQ = topics.reduce((s, t) => s + (t.total_questions || (t.questions ? t.questions.length : 0)), 0);
+  document.getElementById('statsBar').textContent = `${topics.length} / 128 chủ đề đã nhập · ${totalQ} câu hỏi`;
+}
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str || '';
+  return div.innerHTML;
+}
+
+async function renderTopics(topics) {
+  const grid = document.getElementById('topicGrid');
+  const empty = document.getElementById('emptyState');
+  grid.innerHTML = '';
+  if (topics.length === 0) { empty.style.display = 'block'; return; }
+  empty.style.display = 'none';
+
+  for (const t of topics) {
+    const progress = await Store.getProgress(t.topic_id);
+    const lastAttempt = progress.attempts[progress.attempts.length - 1];
+    const card = document.createElement('div');
+    card.className = 'topic-card';
+    const qCount = t.total_questions || (t.questions ? t.questions.length : 0);
+    const scoreLine = lastAttempt
+      ? `Lần gần nhất: ${lastAttempt.score}/${lastAttempt.total} (${Math.round(100*lastAttempt.score/lastAttempt.total)}%)`
+      : 'Chưa làm bài lần nào';
+    const pct = lastAttempt ? Math.round(100 * lastAttempt.score / lastAttempt.total) : 0;
+    card.innerHTML = `
+      <h4>${escapeHtml(t.topic_name)}</h4>
+      <div class="meta">${qCount} câu · ${t.time_limit_minutes || 90} phút</div>
+      <div class="meta">${scoreLine}</div>
+      <div class="progress-mini"><div class="progress-mini-fill" style="width:${pct}%"></div></div>
+      <div class="topic-card-actions">
+        <button class="btn btn-primary btn-open">Làm bài</button>
+        <button class="btn btn-secondary btn-export-one">Xuất JSON</button>
+        <button class="btn btn-secondary btn-delete-one">Xóa</button>
+      </div>
+    `;
+    card.querySelector('.btn-open').onclick = (e) => { e.stopPropagation(); window.location.href = `exam.html?topic=${encodeURIComponent(t.topic_id)}`; };
+    card.querySelector('.btn-export-one').onclick = (e) => { e.stopPropagation(); downloadJSON(t, `${t.topic_id}.json`); };
+    card.querySelector('.btn-delete-one').onclick = async (e) => {
+      e.stopPropagation();
+      if (confirm(`Xóa chủ đề "${t.topic_name}"? (Nên sao lưu trước khi xóa)`)) {
+        await Store.deleteTopic(t.topic_id);
+        refreshTopicGrid();
+      }
+    };
+    card.onclick = () => window.location.href = `exam.html?topic=${encodeURIComponent(t.topic_id)}`;
+    grid.appendChild(card);
+  }
+}
+
+document.getElementById('searchBox').addEventListener('input', (e) => {
+  const q = e.target.value.trim().toLowerCase();
+  const filtered = ALL_TOPICS.filter(t => t.topic_name.toLowerCase().includes(q) || t.topic_id.toLowerCase().includes(q));
+  renderTopics(filtered);
+});
+
+const modalOverlay = document.getElementById('modalOverlay');
+document.getElementById('btnImportTopic').onclick = () => modalOverlay.style.display = 'flex';
+document.getElementById('modalCancel').onclick = () => modalOverlay.style.display = 'none';
+document.getElementById('modalConfirm').onclick = async () => {
+  const input = document.getElementById('jsonFileInput');
+  const files = Array.from(input.files || []);
+  if (files.length === 0) { alert('Vui lòng chọn ít nhất một file JSON.'); return; }
+  let successCount = 0;
+  for (const file of files) {
+    try {
+      const data = await readFileAsJSON(file);
+      if (!data.topic_id) data.topic_id = file.name.replace(/\.json$/i, '').toLowerCase().replace(/[^a-z0-9\-]+/g, '-');
+      await Store.saveTopic(data);
+      successCount++;
+    } catch (err) { alert(`Lỗi khi nhập file "${file.name}": ${err.message}`); }
+  }
+  modalOverlay.style.display = 'none';
+  input.value = '';
+  await refreshTopicGrid();
+  if (successCount > 0) alert(`Đã nhập thành công ${successCount} chủ đề.`);
+};
+
+document.getElementById('btnBackupAll').onclick = async () => {
+  const backup = await Store.exportAll();
+  const dateStr = new Date().toISOString().slice(0,10);
+  downloadJSON(backup, `sao-luu-ngan-hang-de-${dateStr}.json`);
+};
+
+document.getElementById('fileRestore').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  try {
+    const data = await readFileAsJSON(file);
+    await Store.importAll(data);
+    await refreshTopicGrid();
+    alert(`Phục hồi thành công: ${data.topics.length} chủ đề.`);
+  } catch (err) { alert(`Lỗi phục hồi: ${err.message}`); }
+  e.target.value = '';
+});
+
+refreshTopicGrid();
+
+</script>
+</body>
+</html>
